@@ -337,6 +337,8 @@ function toast(m){ const t=document.getElementById("toast"); t.textContent=m; t.
 function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; }
 
 /* ===================== AUTH ===================== */
+// Surface errors from a redirect-based sign-in when the user returns to the page.
+auth.getRedirectResult().catch(showAuthError);
 auth.onAuthStateChanged(async (user)=>{
   USER=user;
   if(!user){
@@ -354,7 +356,24 @@ auth.onAuthStateChanged(async (user)=>{
 });
 function signIn(){
   const p=new firebase.auth.GoogleAuthProvider();
-  auth.signInWithPopup(p).catch(()=>auth.signInWithRedirect(p));
+  auth.signInWithPopup(p).catch((e)=>{
+    const code=(e&&e.code)||"";
+    // Popup unavailable (commonly mobile) -> fall back to a full-page redirect.
+    if(["auth/popup-blocked","auth/popup-closed-by-user","auth/cancelled-popup-request","auth/operation-not-supported-in-this-environment"].includes(code)){
+      auth.signInWithRedirect(p).catch(showAuthError);
+    } else {
+      showAuthError(e);
+    }
+  });
+}
+function showAuthError(e){
+  const code=(e&&e.code)||"";
+  if(code==="auth/unauthorized-domain")
+    toast("This site isn't authorized for sign-in yet. Admin: add this domain in Firebase → Auth → Settings.");
+  else if(code==="auth/network-request-failed")
+    toast("Network error — check your connection and try again.");
+  else
+    toast("Sign-in failed"+(code?(" ("+code+")"):"")+". Please try again.");
 }
 function signOutNow(){ auth.signOut(); closeAccount(); }
 function openAccount(){
