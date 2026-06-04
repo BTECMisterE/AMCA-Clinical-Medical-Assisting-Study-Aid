@@ -127,8 +127,22 @@
     <div class="card section-card" onclick="startExam()" style="border-color:var(--teal)">
       <div class="row">
         <div><h3 style="margin:0">📋 Full Practice Exam</h3>
-          <div class="muted" style="font-size:13px">50 questions weighted to the AMCA CMAC blueprint, graded by domain.</div></div>
+          <div class="muted" style="font-size:13px">50 questions weighted to the AMCA CMAC blueprint · 60-minute timer · graded by domain.</div></div>
         <span class="pill" style="color:var(--teal); border-color:var(--teal); white-space:nowrap">Start ›</span>
+      </div>
+    </div>
+    <div class="card section-card" onclick="startAdaptive()">
+      <div class="row">
+        <div><h3 style="margin:0">🎯 Weak-Area Practice</h3>
+          <div class="muted" style="font-size:13px">A 20-question set that targets your lowest-scoring topics and missed questions.</div></div>
+        <span class="pill" style="white-space:nowrap">Start ›</span>
+      </div>
+    </div>
+    <div class="card section-card" id="missedCard" onclick="startMissedReview()">
+      <div class="row">
+        <div><h3 style="margin:0">🔁 Review Missed</h3>
+          <div class="muted" style="font-size:13px">Re-practice every question you've gotten wrong, from all topics.</div></div>
+        <span class="pill" id="missedCardCount" style="white-space:nowrap">0</span>
       </div>
     </div>
     <div id="catList"></div>
@@ -158,6 +172,7 @@
       <button class="btn ghost small" onclick="confirmExit()">✕ Exit</button>
       <span id="quizCounter"></span>
       <span class="pill" id="quizScore">0 ✓</span>
+      <span class="pill hidden" id="examTimer"></span>
     </div>
     <div class="bar" style="margin-bottom:16px"><i id="quizBar"></i></div>
     <div class="qtext" id="quizQ"></div>
@@ -178,9 +193,9 @@
       <div class="muted" id="resLine">—</div>
       <div id="resBadge" style="margin-top:10px"></div>
     </div>
-    <button class="btn primary block" style="margin:8px 0" id="resReviewBtn" onclick="startQuiz(cur.cat,true)">🔁 Review Missed</button>
-    <button class="btn block" style="margin:8px 0" id="resRetakeBtn" onclick="startQuiz(cur.cat,false)">🔄 Retake</button>
-    <button class="btn ghost block" style="margin:8px 0" onclick="go('cat')">Back to topic</button>
+    <button class="btn primary block" style="margin:8px 0" id="resReviewBtn">🔁 Review Missed</button>
+    <button class="btn block" style="margin:8px 0" id="resRetakeBtn">🔄 Retake</button>
+    <button class="btn ghost block" style="margin:8px 0" id="resBackBtn">Back to topic</button>
   </section>
 
   <!-- EXAM RESULT -->
@@ -233,6 +248,7 @@
     <div class="tabs">
       <button id="tab-q" class="on" onclick="adminTab('q')">Questions</button>
       <button id="tab-s" onclick="adminTab('s')">Students</button>
+      <button id="tab-r" onclick="adminTab('r')">Reports</button>
     </div>
     <div id="admin-q">
       <button class="btn primary block" style="margin-bottom:8px" onclick="openQEditor()">➕ Add a question</button>
@@ -244,6 +260,11 @@
       <button class="btn ghost small" style="margin-bottom:8px" onclick="loadStudents()">🔄 Refresh</button>
       <div id="studentList"></div>
       <div id="studentDetail"></div>
+    </div>
+    <div id="admin-r" class="hidden">
+      <p class="muted" style="font-size:13px">Problems students flagged on specific questions. Edit the question to fix it, then resolve the report.</p>
+      <button class="btn ghost small" style="margin-bottom:8px" onclick="loadReports()">🔄 Refresh</button>
+      <div id="reportList"></div>
     </div>
   </section>
 
@@ -284,6 +305,26 @@
   </div>
 </div>
 
+<!-- REPORT MODAL -->
+<div id="reportModal" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:40; display:flex; align-items:flex-end; justify-content:center" onclick="if(event.target===this)closeReport()">
+  <div class="card" style="width:100%; max-width:680px; border-radius:18px 18px 0 0; margin:0">
+    <h3 style="margin-top:0">Report a problem</h3>
+    <p class="muted" id="reportQPreview" style="font-size:13px"></p>
+    <label>What's the issue?</label>
+    <select id="reportReason">
+      <option>The marked answer looks wrong</option>
+      <option>More than one answer is correct</option>
+      <option>Typo or confusing wording</option>
+      <option>Outdated or inaccurate information</option>
+      <option>Other</option>
+    </select>
+    <label>Details (optional)</label>
+    <textarea id="reportNote" placeholder="Anything that helps your instructor fix it"></textarea>
+    <button class="btn primary block" style="margin-top:12px" onclick="submitReport()">Send report</button>
+    <button class="btn ghost block" style="margin-top:8px" onclick="closeReport()">Cancel</button>
+  </div>
+</div>
+
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -321,6 +362,8 @@ const CATS = [
 const CAT_BY_ID = Object.fromEntries(CATS.map(c=>[c.id,c]));
 const DOMAINS = [...new Set(CATS.map(c=>c.domain))];
 const EXAM_LEN = 50;
+const EXAM_MINUTES = 60;        // full-exam time limit
+const ADAPTIVE_LEN = 20;        // weak-area practice set size
 
 /* ===================== STATE ===================== */
 firebase.initializeApp(FIREBASE_CONFIG);
@@ -330,6 +373,7 @@ db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
 
 let USER=null, QUESTIONS=[], QBYCAT={}, PROGRESS={stats:{},missed:[],exams:[]}, STUDENTS=[];
 let cur={};
+let examTimer=null;
 const VIEWS=["auth","home","cat","quiz","result","examresult","flash","stats","admin","qeditor"];
 
 function isAdmin(){ return !!USER && ADMIN_EMAILS.includes((USER.email||"").toLowerCase()); }
@@ -399,8 +443,15 @@ async function loadQuestions(){
     if(!QUESTIONS.length) toast("Couldn't load questions — check connection.");
   }
   buildCats();
-  const seedBtn=document.getElementById("seedBtn");
-  if(seedBtn) seedBtn.classList.toggle("hidden", !(isAdmin() && QUESTIONS.length===0));
+  updateSeedBtn();
+}
+function updateSeedBtn(){
+  const b=document.getElementById("seedBtn"); if(!b) return;
+  b.classList.toggle("hidden", !isAdmin());
+  const n=(typeof SEED_QUESTIONS!=="undefined")?SEED_QUESTIONS.length:0;
+  const replacing=QUESTIONS.length>0;
+  b.textContent = replacing ? `♻️ Replace bank with ${n} starter questions` : `🌱 Seed starter question bank (${n})`;
+  b.classList.toggle("danger", replacing);
 }
 function buildCats(){
   QBYCAT={}; CATS.forEach(c=>QBYCAT[c.id]=[]);
@@ -440,6 +491,7 @@ function seenSum(){ return Object.values(PROGRESS.stats).reduce((n,s)=>n+(s.seen
 
 /* ===================== NAV ===================== */
 function go(view){
+  if(view!=="quiz") stopExamTimer();
   VIEWS.forEach(v=>document.getElementById("view-"+v).classList.toggle("hidden", v!==view));
   const examActive = cur.mode==="exam" && (view==="quiz"||view==="examresult");
   document.getElementById("nav-home").classList.toggle("active", !examActive && ["home","cat","quiz","result","flash"].includes(view));
@@ -456,6 +508,9 @@ function refreshHome(){
   document.getElementById("overallPct").textContent=o.pct+"%";
   document.getElementById("overallSeen").textContent=answeredCount()+"/"+o.total;
   document.getElementById("overallBar").style.width=o.pct+"%";
+  const missedN=missedQuestions().length;
+  document.getElementById("missedCardCount").textContent=missedN;
+  document.getElementById("missedCard").style.opacity=missedN?1:.55;
   const wrap=document.getElementById("catList"); wrap.innerHTML="";
   DOMAINS.forEach(dom=>{
     const h=document.createElement("div"); h.className="domain-h"; h.textContent=dom; wrap.appendChild(h);
@@ -494,14 +549,46 @@ function startQuiz(catId, review){
   document.getElementById("examControls").classList.add("hidden");
   go("quiz"); renderQuiz();
 }
+function missedQuestions(){ return QUESTIONS.filter(q=>PROGRESS.missed.includes(q.id)); }
+// Weak-area practice: rank every question by how much it needs work, take the top set.
+function startAdaptive(){
+  if(!QUESTIONS.length){ toast("No questions available yet."); return; }
+  const catPct={}; CATS.forEach(c=>catPct[c.id]=catMastery(c.id).pct);
+  const scored=QUESTIONS.map((q,idx)=>{
+    const st=PROGRESS.stats[q.id];
+    let need=100-(catPct[q.cat]||0);                 // weaker topic -> higher priority
+    if(PROGRESS.missed.includes(q.id)) need+=200;    // currently missed = top priority
+    else if(!st||!st.seen) need+=80;                 // never seen
+    else if((st.wrong||0)>(st.correct||0)) need+=120;// struggling
+    else if((st.correct||0)>=(st.seen||0)) need-=60; // solid -> deprioritize
+    need+=((idx*37)%23);                             // light deterministic jitter for variety
+    return {q,need};
+  });
+  scored.sort((a,b)=>b.need-a.need);
+  const list=shuffle(scored.slice(0, Math.min(ADAPTIVE_LEN, scored.length)).map(s=>s.q));
+  cur={mode:"quiz", cat:null, adaptive:true, review:false, list, i:0, score:0, answered:false};
+  document.getElementById("examControls").classList.add("hidden");
+  go("quiz"); renderQuiz();
+}
+// Global review of every missed question across all topics.
+function startMissedReview(){
+  const pool=missedQuestions();
+  if(!pool.length){ toast("No missed questions to review — nice work!"); return; }
+  cur={mode:"quiz", cat:null, missedReview:true, review:true, list:shuffle(pool), i:0, score:0, answered:false};
+  document.getElementById("examControls").classList.add("hidden");
+  go("quiz"); renderQuiz();
+}
 function renderQuiz(){
   const q=cur.list[cur.i]; cur.answered=false;
-  document.getElementById("quizCounter").textContent=`${cur.i+1} / ${cur.list.length}`+(cur.review?" · review":"");
+  document.getElementById("examTimer").classList.add("hidden");
+  document.getElementById("quizScore").classList.remove("hidden");
+  const label=cur.adaptive?" · weak-area":(cur.missedReview?" · missed":(cur.review?" · review":""));
+  document.getElementById("quizCounter").textContent=`${cur.i+1} / ${cur.list.length}`+label;
   document.getElementById("quizScore").textContent=`${cur.score} ✓`;
   document.getElementById("quizBar").style.width=(cur.i/cur.list.length*100)+"%";
   document.getElementById("quizQ").textContent=q.q;
   document.getElementById("quizExplain").innerHTML="";
-  document.getElementById("reportRow").innerHTML="";
+  showReportButton(q);
   document.getElementById("nextBtn").classList.add("hidden");
   const keys=["A","B","C","D","E"]; const cc=document.getElementById("quizChoices"); cc.innerHTML="";
   q.choices.forEach((c,ci)=>{
@@ -528,7 +615,7 @@ function nextQuiz(){ if(cur.i>=cur.list.length-1){ showResult(); return; } cur.i
 function confirmExit(){
   if(cur.mode==="examreview"){ go("examresult"); return; }
   if(cur.mode==="exam"){ if(confirm("Leave the exam? Your answers won't be saved.")){ document.getElementById("examControls").classList.add("hidden"); go("home"); } return; }
-  if(confirm("Exit this quiz? Answered questions are already saved.")) go("cat");
+  if(confirm("Exit this quiz? Answered questions are already saved.")) go(cur.cat?"cat":"home");
 }
 function showResult(){
   const pct=Math.round(cur.score/cur.list.length*100);
@@ -538,9 +625,24 @@ function showResult(){
   document.getElementById("resBadge").innerHTML = pct>=80
     ? `<span class="pill" style="color:var(--green);border-color:var(--green)">Strong — 80%+</span>`
     : `<span class="pill" style="color:var(--amber);border-color:var(--amber)">Keep practicing</span>`;
-  const missed=(QBYCAT[cur.cat]||[]).filter(q=>PROGRESS.missed.includes(q.id)).length;
-  const rb=document.getElementById("resReviewBtn");
-  rb.style.display=missed?"flex":"none"; rb.textContent=`🔁 Review Missed (${missed})`;
+  const reviewBtn=document.getElementById("resReviewBtn");
+  const retakeBtn=document.getElementById("resRetakeBtn");
+  const backBtn=document.getElementById("resBackBtn");
+  const totalMissed=missedQuestions().length;
+  if(cur.adaptive){
+    retakeBtn.style.display="flex"; retakeBtn.textContent="🎯 New weak-area set"; retakeBtn.onclick=startAdaptive;
+    reviewBtn.style.display=totalMissed?"flex":"none"; reviewBtn.textContent=`🔁 Review Missed (${totalMissed})`; reviewBtn.onclick=startMissedReview;
+    backBtn.textContent="Back to home"; backBtn.onclick=()=>go("home");
+  } else if(cur.missedReview){
+    reviewBtn.style.display="none";
+    retakeBtn.style.display=totalMissed?"flex":"none"; retakeBtn.textContent=`🔁 Review remaining (${totalMissed})`; retakeBtn.onclick=startMissedReview;
+    backBtn.textContent="Back to home"; backBtn.onclick=()=>go("home");
+  } else {
+    retakeBtn.style.display="flex"; retakeBtn.textContent="🔄 Retake"; retakeBtn.onclick=()=>startQuiz(cur.cat,false);
+    const catMissed=(QBYCAT[cur.cat]||[]).filter(q=>PROGRESS.missed.includes(q.id)).length;
+    reviewBtn.style.display=catMissed?"flex":"none"; reviewBtn.textContent=`🔁 Review Missed (${catMissed})`; reviewBtn.onclick=()=>startQuiz(cur.cat,true);
+    backBtn.textContent="Back to topic"; backBtn.onclick=()=>go("cat");
+  }
 }
 
 /* ===================== FLASHCARDS ===================== */
@@ -578,19 +680,41 @@ function startExam(){
     items=items.concat(pool.slice(0, Math.min(n, pool.length)));
   });
   if(!items.length){ toast("No questions available yet."); return; }
-  cur={mode:"exam", list:shuffle(items), i:0, answers:new Array(items.length).fill(null)};
+  cur={mode:"exam", list:shuffle(items), i:0, answers:new Array(items.length).fill(null),
+       startedAt:Date.now(), deadline:Date.now()+EXAM_MINUTES*60*1000};
   document.getElementById("nextBtn").classList.add("hidden");
   document.getElementById("examControls").classList.remove("hidden");
-  go("quiz"); renderExam();
+  go("quiz"); renderExam(); startExamTimer();
 }
+function startExamTimer(){
+  stopExamTimer();
+  tickExamTimer();
+  examTimer=setInterval(tickExamTimer,1000);
+}
+function stopExamTimer(){ if(examTimer){ clearInterval(examTimer); examTimer=null; } }
+function tickExamTimer(){
+  const el=document.getElementById("examTimer");
+  if(cur.mode!=="exam" || !cur.deadline){ stopExamTimer(); return; }
+  const remain=Math.max(0, cur.deadline-Date.now());
+  const m=Math.floor(remain/60000), s=Math.floor((remain%60000)/1000);
+  if(el){
+    el.textContent=`⏱ ${m}:${String(s).padStart(2,"0")}`;
+    el.style.color = remain<60000?"var(--red)":(remain<300000?"var(--amber)":"");
+    el.style.borderColor = remain<60000?"var(--red)":(remain<300000?"var(--amber)":"");
+  }
+  if(remain<=0){ stopExamTimer(); toast("Time's up — submitting your exam."); submitExam(true); }
+}
+function fmtDur(ms){ if(ms==null) return ""; const s=Math.round(ms/1000); return Math.floor(s/60)+"m "+String(s%60).padStart(2,"0")+"s"; }
 function renderExam(){
   const q=cur.list[cur.i];
+  document.getElementById("quizScore").classList.add("hidden");
+  document.getElementById("examTimer").classList.remove("hidden");
+  tickExamTimer();
   document.getElementById("quizCounter").textContent=`Question ${cur.i+1} / ${cur.list.length}`;
-  document.getElementById("quizScore").textContent=CAT_BY_ID[q.cat]?.domain||"";
   document.getElementById("quizBar").style.width=(cur.i/cur.list.length*100)+"%";
   document.getElementById("quizQ").textContent=q.q;
   document.getElementById("quizExplain").innerHTML="";
-  document.getElementById("reportRow").innerHTML="";
+  showReportButton(q);
   const keys=["A","B","C","D","E"]; const cc=document.getElementById("quizChoices"); cc.innerHTML="";
   q.choices.forEach((c,ci)=>{
     const b=document.createElement("button"); b.className="choice"+(cur.answers[cur.i]===ci?" sel":"");
@@ -605,9 +729,13 @@ function examNextRouter(){ cur.mode==="examreview"?examReviewNext():examNext(); 
 function examPrevRouter(){ cur.mode==="examreview"?examReviewPrev():examPrev(); }
 function examNext(){ if(cur.i>=cur.list.length-1){ submitExam(); return; } cur.i++; renderExam(); window.scrollTo(0,0); }
 function examPrev(){ if(cur.i>0){ cur.i--; renderExam(); window.scrollTo(0,0); } }
-function submitExam(){
-  const un=cur.answers.filter(a=>a===null).length;
-  if(un>0 && !confirm(`${un} unanswered question${un>1?"s":""} will count as wrong. Submit anyway?`)) return;
+function submitExam(auto){
+  if(!auto){
+    const un=cur.answers.filter(a=>a===null).length;
+    if(un>0 && !confirm(`${un} unanswered question${un>1?"s":""} will count as wrong. Submit anyway?`)) return;
+  }
+  stopExamTimer();
+  const dur=cur.startedAt?Date.now()-cur.startedAt:null;
   let correct=0; const byDom={}, byCat={};
   cur.list.forEach((q,i)=>{
     const ok=cur.answers[i]===q.answer; const dom=CAT_BY_ID[q.cat]?.domain||"Other";
@@ -618,19 +746,22 @@ function submitExam(){
     else { st.wrong++; if(!PROGRESS.missed.includes(q.id)) PROGRESS.missed.push(q.id); }
   });
   const pct=Math.round(correct/cur.list.length*100);
-  PROGRESS.exams.push({at:Date.now(), total:cur.list.length, correct, pct, byCat});
+  PROGRESS.exams.push({at:Date.now(), total:cur.list.length, correct, pct, byCat, dur, timedOut:!!auto});
   saveProgress();
-  cur.examScore={correct, pct, byDom};
+  cur.examScore={correct, pct, byDom, dur, timedOut:!!auto};
   document.getElementById("examControls").classList.add("hidden");
   renderExamResult(); go("examresult");
 }
 function renderExamResult(){
-  const {correct, pct, byDom}=cur.examScore;
+  const {correct, pct, byDom, dur, timedOut}=cur.examScore;
   document.getElementById("examResVerdict").innerHTML = pct>=70
     ? `<div class="verdict" style="color:var(--green)">Nice work — keep it up</div>`
     : `<div class="verdict" style="color:var(--amber)">More practice needed</div>`;
   document.getElementById("examResPct").textContent=pct+"%";
-  document.getElementById("examResLine").textContent=`${correct} of ${cur.list.length} correct`;
+  let line=`${correct} of ${cur.list.length} correct`;
+  if(dur!=null) line+=` · ${fmtDur(dur)}`;
+  if(timedOut) line+=` · ⏱ time expired`;
+  document.getElementById("examResLine").textContent=line;
   document.getElementById("examResBreakdown").innerHTML = DOMAINS.map(d=>{
     const r=byDom[d]||{c:0,t:0}; const p=r.t?Math.round(r.c/r.t*100):0; const col=p>=70?"var(--green)":"var(--amber)";
     return `<div class="subscore"><div><b>${d}</b><div class="muted" style="font-size:13px">${r.c}/${r.t} correct</div></div>
@@ -640,6 +771,8 @@ function renderExamResult(){
 function reviewExam(){ cur.mode="examreview"; cur.i=0; document.getElementById("examControls").classList.remove("hidden"); go("quiz"); renderExamReview(); }
 function renderExamReview(){
   const q=cur.list[cur.i], sel=cur.answers[cur.i], correct=sel===q.answer;
+  document.getElementById("examTimer").classList.add("hidden");
+  document.getElementById("quizScore").classList.remove("hidden");
   document.getElementById("quizCounter").textContent=`Review ${cur.i+1} / ${cur.list.length}`;
   document.getElementById("quizScore").textContent=CAT_BY_ID[q.cat]?.name||"";
   document.getElementById("quizBar").style.width=((cur.i+1)/cur.list.length*100)+"%";
@@ -651,7 +784,7 @@ function renderExamReview(){
   });
   const head=sel===null?"You skipped this.":(correct?"You answered correctly.":"Your answer was incorrect.");
   document.getElementById("quizExplain").innerHTML=`<div class="explain ${correct?'':'bad'}"><b>${head}</b> — ${q.why||""}</div>`;
-  document.getElementById("reportRow").innerHTML="";
+  showReportButton(q);
   const prev=document.getElementById("examPrev"); prev.disabled=cur.i===0; prev.style.opacity=cur.i===0?.5:1;
   document.getElementById("examNext").textContent=(cur.i>=cur.list.length-1)?"Back to results ›":"Next ›";
 }
@@ -669,22 +802,53 @@ function refreshStats(){
       <div style="text-align:right; min-width:120px"><div class="pct">${m.pct}%</div><div class="bar"><i style="width:${m.pct}%"></i></div></div></div>`; }).join("");
   const ex=document.getElementById("statExams");
   ex.innerHTML = PROGRESS.exams.length ? PROGRESS.exams.slice().reverse().map(e=>
-    `<div class="subscore"><div>${fmtDate(e.at)}</div><div class="pct">${e.pct}% <span class="muted" style="font-weight:400">(${e.correct}/${e.total})</span></div></div>`).join("")
+    `<div class="subscore"><div>${fmtDate(e.at)}${e.dur?`<div class="muted" style="font-size:12px">${fmtDur(e.dur)}${e.timedOut?" · timed out":""}</div>`:""}</div><div class="pct">${e.pct}% <span class="muted" style="font-weight:400">(${e.correct}/${e.total})</span></div></div>`).join("")
     : `<p class="muted">No exams taken yet.</p>`;
 }
 function fmtDate(ms){ if(!ms) return "—"; const d=new Date(ms); return d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+" "+d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"}); }
 
+/* ===================== REPORT A QUESTION ===================== */
+let reportQid=null;
+function showReportButton(q){
+  document.getElementById("reportRow").innerHTML =
+    `<div class="report-row"><button class="btn report small" type="button" onclick="openReport('${q.id}')">⚠ Report a problem</button></div>`;
+}
+function openReport(qid){
+  if(!USER){ signIn(); return; }
+  reportQid=qid;
+  const q=QUESTIONS.find(x=>x.id===qid);
+  document.getElementById("reportQPreview").textContent=q?`“${q.q}”`:"";
+  document.getElementById("reportReason").selectedIndex=0;
+  document.getElementById("reportNote").value="";
+  document.getElementById("reportModal").classList.remove("hidden");
+}
+function closeReport(){ document.getElementById("reportModal").classList.add("hidden"); reportQid=null; }
+async function submitReport(){
+  if(!reportQid){ closeReport(); return; }
+  const q=QUESTIONS.find(x=>x.id===reportQid);
+  const data={ qid:reportQid, qtext:q?q.q:"", cat:q?q.cat:"",
+    reason:document.getElementById("reportReason").value,
+    note:document.getElementById("reportNote").value.trim(),
+    byUid:USER.uid, byEmail:USER.email||"", byName:USER.displayName||"",
+    at:Date.now(), status:"open" };
+  try{ await db.collection("reports").add(data); toast("Thanks — your instructor was notified."); }
+  catch(e){ toast("Couldn't send report. Please try again."); }
+  closeReport();
+}
+
 /* ===================== ADMIN: QUESTIONS ===================== */
 function adminTab(t){
-  document.getElementById("tab-q").classList.toggle("on",t==="q");
-  document.getElementById("tab-s").classList.toggle("on",t==="s");
-  document.getElementById("admin-q").classList.toggle("hidden",t!=="q");
-  document.getElementById("admin-s").classList.toggle("hidden",t!=="s");
+  ["q","s","r"].forEach(x=>{
+    document.getElementById("tab-"+x).classList.toggle("on",x===t);
+    document.getElementById("admin-"+x).classList.toggle("hidden",x!==t);
+  });
   if(t==="s") loadStudents();
+  if(t==="r") loadReports();
 }
 function refreshAdmin(){
   if(!isAdmin()){ go("home"); return; }
-  document.getElementById("seedBtn").classList.toggle("hidden", QUESTIONS.length!==0);
+  updateSeedBtn();
+  db.collection("reports").get().then(s=>updateReportBadge(s.size)).catch(()=>{});
   const wrap=document.getElementById("adminQList"); wrap.innerHTML="";
   DOMAINS.forEach(dom=>{
     CATS.filter(c=>c.domain===dom).forEach(c=>{
@@ -745,17 +909,31 @@ async function deleteQuestion(){
 }
 async function seedDatabase(){
   if(typeof SEED_QUESTIONS==="undefined"){ toast("Seed file missing."); return; }
-  if(!confirm(`Add ${SEED_QUESTIONS.length} starter questions to the database?`)) return;
-  toast("Seeding…");
+  const replacing = QUESTIONS.length>0;
+  const msg = replacing
+    ? `This will DELETE the current ${QUESTIONS.length} question(s) and load the ${SEED_QUESTIONS.length} starter questions. Continue?`
+    : `Add ${SEED_QUESTIONS.length} starter questions to the database?`;
+  if(!confirm(msg)) return;
+  toast("Updating question bank…");
   try{
+    // Replace: remove existing questions first so we end at exactly the starter set.
+    if(replacing){
+      let dbatch=db.batch(), dn=0;
+      for(const q of QUESTIONS){
+        dbatch.delete(db.collection("questions").doc(q.id)); dn++;
+        if(dn%400===0){ await dbatch.commit(); dbatch=db.batch(); }
+      }
+      await dbatch.commit();
+    }
     let batch=db.batch(), n=0;
     for(const q of SEED_QUESTIONS){
       const ref=db.collection("questions").doc(); batch.set(ref,q); n++;
       if(n%400===0){ await batch.commit(); batch=db.batch(); }
     }
     await batch.commit();
-    toast("Starter questions added!"); await loadQuestions(); go("admin");
-  }catch(e){ toast("Seeding failed — check admin rights & rules."); }
+    toast(replacing ? "Question bank replaced!" : "Starter questions added!");
+    await loadQuestions(); go("admin");
+  }catch(e){ toast("Update failed — check admin rights & rules."); }
 }
 
 /* ===================== ADMIN: STUDENTS ===================== */
@@ -791,6 +969,39 @@ function showStudent(idx){
     <h4 style="margin-top:16px">Exam history</h4>${exams}</div>`;
   document.getElementById("studentDetail").scrollIntoView({behavior:"smooth"});
 }
+
+/* ===================== ADMIN: REPORTS ===================== */
+function updateReportBadge(n){
+  const tab=document.getElementById("tab-r");
+  if(tab) tab.textContent = n>0 ? `Reports (${n})` : "Reports";
+}
+async function loadReports(){
+  const wrap=document.getElementById("reportList");
+  wrap.innerHTML=`<p class="muted">Loading…</p>`;
+  let reports=[];
+  try{
+    const snap=await db.collection("reports").orderBy("at","desc").get();
+    reports=snap.docs.map(d=>({id:d.id, ...d.data()}));
+  }catch(e){ wrap.innerHTML=`<p class="muted">Couldn't load reports (need admin access).</p>`; return; }
+  updateReportBadge(reports.length);
+  if(!reports.length){ wrap.innerHTML=`<p class="muted">No open reports. 🎉</p>`; return; }
+  wrap.innerHTML=reports.map(r=>{
+    const exists=QUESTIONS.some(q=>q.id===r.qid);
+    return `<div class="qadmin">
+      <div class="qa-q">${esc(r.qtext)||"(question text unavailable)"}</div>
+      <div class="qa-meta">⚠ ${esc(r.reason)}${r.note?(" — "+esc(r.note)):""}</div>
+      <div class="qa-meta">${esc(CAT_BY_ID[r.cat]?.name||r.cat||"?")} · by ${esc(r.byName||r.byEmail||"student")} · ${fmtDate(r.at)}</div>
+      <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap">
+        ${exists?`<button class="btn small" onclick="openQEditor('${r.qid}')">Edit question</button>`:`<span class="pill">question deleted</span>`}
+        <button class="btn small" onclick="resolveReport('${r.id}')">✓ Resolve</button>
+      </div></div>`;
+  }).join("");
+}
+async function resolveReport(id){
+  try{ await db.collection("reports").doc(id).delete(); toast("Report resolved."); loadReports(); }
+  catch(e){ toast("Couldn't update report."); }
+}
+function esc(s){ return (s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 
 /* ===================== SERVICE WORKER ===================== */
 if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
