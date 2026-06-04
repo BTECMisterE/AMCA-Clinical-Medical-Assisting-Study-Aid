@@ -6,7 +6,7 @@ service cloud.firestore {
     // Must match ADMIN_EMAILS in index.html.
     function isAdmin() {
       return request.auth != null
-        && request.auth.token.email.lower() in ['__set_your_admin_email__'];
+        && request.auth.token.email.lower() in ['kenneth.elyosius@gmail.com'];
     }
 
     // Questions: any signed-in student may READ; only the admin may WRITE.
