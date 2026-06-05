@@ -1,6 +1,6 @@
 /* Offline cache for the AMCA CMAC Study app shell.
    Firebase/Firestore network calls are never cached (data must stay live). */
-const CACHE = "amca-study-v3";
+const CACHE = "amca-study-v4";
 const ASSETS = ["./", "./index.html", "./seed-questions.js", "./manifest.json",
   "./icon.svg", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 

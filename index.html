@@ -124,11 +124,18 @@
       </div>
       <div class="bar"><i id="overallBar"></i></div>
     </div>
-    <div class="card section-card" onclick="startExam()" style="border-color:var(--teal)">
+    <div class="card section-card" onclick="startExam(false)" style="border-color:var(--teal)">
       <div class="row">
-        <div><h3 style="margin:0">📋 Full Practice Exam</h3>
-          <div class="muted" style="font-size:13px">50 questions weighted to the AMCA CMAC blueprint · 60-minute timer · graded by domain.</div></div>
+        <div><h3 style="margin:0">📋 Practice Exam</h3>
+          <div class="muted" style="font-size:13px">50 questions weighted to the CMAC blueprint, timed at the real exam's pace (~43 min) and graded by domain.</div></div>
         <span class="pill" style="color:var(--teal); border-color:var(--teal); white-space:nowrap">Start ›</span>
+      </div>
+    </div>
+    <div class="card section-card" onclick="startExam(true)">
+      <div class="row">
+        <div><h3 style="margin:0">🎓 Full CMAC Simulation</h3>
+          <div class="muted" style="font-size:13px">The real-deal experience: 175 questions in 2.5 hours, weighted and graded like the actual CMAC exam.</div></div>
+        <span class="pill" style="white-space:nowrap">Start ›</span>
       </div>
     </div>
     <div class="card section-card" onclick="startAdaptive()">
@@ -361,9 +368,12 @@ const CATS = [
 ];
 const CAT_BY_ID = Object.fromEntries(CATS.map(c=>[c.id,c]));
 const DOMAINS = [...new Set(CATS.map(c=>c.domain))];
-const EXAM_LEN = 50;
-const EXAM_MINUTES = 60;        // full-exam time limit
+const EXAM_LEN = 50;            // quick practice exam length
+const FULL_LEN = 175;          // full CMAC simulation: 175 questions (160 scored + 15 pretest)
+const REAL_MINUTES = 150;      // real CMAC time limit: 2 hours 30 minutes
 const ADAPTIVE_LEN = 20;        // weak-area practice set size
+// Time limit scaled to the real exam's pace (~0.857 min/question).
+function examMinutesFor(len){ return Math.max(1, Math.round(len*REAL_MINUTES/FULL_LEN)); }
 
 /* ===================== STATE ===================== */
 firebase.initializeApp(FIREBASE_CONFIG);
@@ -671,17 +681,20 @@ function nextFlash(){ if(cur.i<cur.list.length-1){cur.i++; renderFlash();} else 
 function prevFlash(){ if(cur.i>0){cur.i--; renderFlash();} }
 
 /* ===================== FULL EXAM (weighted) ===================== */
-function startExam(){
+function startExam(full){
   if(!QUESTIONS.length){ toast("No questions available yet."); return; }
+  const targetLen = full ? FULL_LEN : EXAM_LEN;
   let items=[];
   CATS.forEach(c=>{
-    const n=Math.max(1, Math.round(c.weight/100*EXAM_LEN));
+    const n=Math.max(1, Math.round(c.weight/100*targetLen));
     const pool=shuffle((QBYCAT[c.id]||[]).slice());
     items=items.concat(pool.slice(0, Math.min(n, pool.length)));
   });
   if(!items.length){ toast("No questions available yet."); return; }
-  cur={mode:"exam", list:shuffle(items), i:0, answers:new Array(items.length).fill(null),
-       startedAt:Date.now(), deadline:Date.now()+EXAM_MINUTES*60*1000};
+  // Full sim uses the real 150-minute limit; the practice exam is paced proportionally.
+  const minutes = full ? REAL_MINUTES : examMinutesFor(items.length);
+  cur={mode:"exam", full:!!full, list:shuffle(items), i:0, answers:new Array(items.length).fill(null),
+       startedAt:Date.now(), deadline:Date.now()+minutes*60*1000, minutes};
   document.getElementById("nextBtn").classList.add("hidden");
   document.getElementById("examControls").classList.remove("hidden");
   go("quiz"); renderExam(); startExamTimer();
@@ -758,7 +771,7 @@ function renderExamResult(){
     ? `<div class="verdict" style="color:var(--green)">Nice work — keep it up</div>`
     : `<div class="verdict" style="color:var(--amber)">More practice needed</div>`;
   document.getElementById("examResPct").textContent=pct+"%";
-  let line=`${correct} of ${cur.list.length} correct`;
+  let line=`${cur.full?"Full CMAC simulation":"Practice exam"} · ${correct} of ${cur.list.length} correct`;
   if(dur!=null) line+=` · ${fmtDur(dur)}`;
   if(timedOut) line+=` · ⏱ time expired`;
   document.getElementById("examResLine").textContent=line;
