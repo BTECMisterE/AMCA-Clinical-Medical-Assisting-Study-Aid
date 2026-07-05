@@ -389,6 +389,14 @@ const VIEWS=["auth","home","cat","quiz","result","examresult","flash","stats","a
 function isAdmin(){ return !!USER && ADMIN_EMAILS.includes((USER.email||"").toLowerCase()); }
 function toast(m){ const t=document.getElementById("toast"); t.textContent=m; t.classList.add("show"); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2200); }
 function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; }
+// Randomize where the correct answer sits: return a COPY of the question with its
+// choices shuffled and the answer index remapped. Leaves the stored bank untouched,
+// so every quiz/exam shows answers in varied positions (fixes the "always B" tell).
+function shuffleChoices(q){
+  if(!q || !Array.isArray(q.choices) || q.choices.length<2) return q;
+  const order=shuffle(q.choices.map((_,i)=>i));
+  return {...q, choices:order.map(i=>q.choices[i]), answer:order.indexOf(q.answer)};
+}
 
 /* ===================== AUTH ===================== */
 // Surface errors from a redirect-based sign-in when the user returns to the page.
@@ -555,7 +563,7 @@ function startQuiz(catId, review){
   let pool=(QBYCAT[catId]||[]).slice();
   if(review){ pool=pool.filter(q=>PROGRESS.missed.includes(q.id)); if(!pool.length){ toast("No missed questions here yet!"); return; } }
   if(!pool.length){ toast("No questions in this topic yet."); return; }
-  cur={mode:"quiz", cat:catId, review:review, list:shuffle(pool), i:0, score:0, answered:false};
+  cur={mode:"quiz", cat:catId, review:review, list:shuffle(pool).map(shuffleChoices), i:0, score:0, answered:false};
   document.getElementById("examControls").classList.add("hidden");
   go("quiz"); renderQuiz();
 }
@@ -575,7 +583,7 @@ function startAdaptive(){
     return {q,need};
   });
   scored.sort((a,b)=>b.need-a.need);
-  const list=shuffle(scored.slice(0, Math.min(ADAPTIVE_LEN, scored.length)).map(s=>s.q));
+  const list=shuffle(scored.slice(0, Math.min(ADAPTIVE_LEN, scored.length)).map(s=>s.q)).map(shuffleChoices);
   cur={mode:"quiz", cat:null, adaptive:true, review:false, list, i:0, score:0, answered:false};
   document.getElementById("examControls").classList.add("hidden");
   go("quiz"); renderQuiz();
@@ -584,7 +592,7 @@ function startAdaptive(){
 function startMissedReview(){
   const pool=missedQuestions();
   if(!pool.length){ toast("No missed questions to review — nice work!"); return; }
-  cur={mode:"quiz", cat:null, missedReview:true, review:true, list:shuffle(pool), i:0, score:0, answered:false};
+  cur={mode:"quiz", cat:null, missedReview:true, review:true, list:shuffle(pool).map(shuffleChoices), i:0, score:0, answered:false};
   document.getElementById("examControls").classList.add("hidden");
   go("quiz"); renderQuiz();
 }
@@ -659,7 +667,7 @@ function showResult(){
 function startFlash(catId){
   const pool=(QBYCAT[catId]||[]).slice();
   if(!pool.length){ toast("No questions in this topic yet."); return; }
-  cur={mode:"flash", cat:catId, list:shuffle(pool), i:0, flip:false};
+  cur={mode:"flash", cat:catId, list:shuffle(pool).map(shuffleChoices), i:0, flip:false};
   go("flash"); renderFlash();
 }
 function renderFlash(){
@@ -693,7 +701,7 @@ function startExam(full){
   if(!items.length){ toast("No questions available yet."); return; }
   // Full sim uses the real 150-minute limit; the practice exam is paced proportionally.
   const minutes = full ? REAL_MINUTES : examMinutesFor(items.length);
-  cur={mode:"exam", full:!!full, list:shuffle(items), i:0, answers:new Array(items.length).fill(null),
+  cur={mode:"exam", full:!!full, list:shuffle(items).map(shuffleChoices), i:0, answers:new Array(items.length).fill(null),
        startedAt:Date.now(), deadline:Date.now()+minutes*60*1000, minutes};
   document.getElementById("nextBtn").classList.add("hidden");
   document.getElementById("examControls").classList.remove("hidden");
